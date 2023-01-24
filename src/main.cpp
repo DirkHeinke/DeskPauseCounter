@@ -1,14 +1,14 @@
 #include <Arduino.h>
 #include <TM1637Display.h>
-#include <RotaryEncoder.h>
+#include <PinButton.h>
+#include <FlashStorage_SAMD.h>
 
-#define LED_PIN 13
 #define DISPLAY_CLK 0
 #define DISPLAY_DIO 1
+#define BUTTON 2
 
-#define RE_SW 4
-#define RE_CLK 3
-#define RE_DT 2
+#define DEFAULT_DURATION_LONG 30
+#define DEFAULT_DURATION_SHORT 5
 
 enum DisplayMode
 {
@@ -27,28 +27,24 @@ enum SystemMode
   CountdownShortDone,
 };
 
-TM1637Display display(DISPLAY_CLK, DISPLAY_DIO);
-RotaryEncoder *encoder = new RotaryEncoder(RE_CLK, RE_DT, RotaryEncoder::LatchMode::TWO03);
+enum ButtonClicked
+{
+  False,
+  Short,
+  Long
+};
 
+TM1637Display display(DISPLAY_CLK, DISPLAY_DIO);
+PinButton button(BUTTON);
 DisplayMode displayMode = Countdown;
 SystemMode systemMode = CountdownLong;
 
-int durationLong = 30 * 1000 * 60;
-int durationShort = 5 * 1000 * 60;
+int durationLong = 0;
+int durationShort = 0;
 int counterValue = durationLong;
 unsigned long lastRun = 0;
-bool buttonClicked = false;
-
-void OnButtonClicked(void)
-{
-  Serial.println("Button 1: clicked");
-  buttonClicked = true;
-}
-
-void checkPosition()
-{
-  encoder->tick(); // just call tick() to check the state.
-}
+ButtonClicked buttonClicked = False;
+const int WRITTEN_SIGNATURE = 12345;
 
 void updateDisplay(unsigned long now)
 {
@@ -116,7 +112,7 @@ bool updateCounter(unsigned long tDiff)
   return true;
 }
 
-void updateSystem(bool counterDone, bool button)
+void updateSystem(bool counterDone, ButtonClicked button)
 {
   switch (systemMode)
   {
@@ -127,11 +123,17 @@ void updateSystem(bool counterDone, bool button)
       systemMode = CountdownLongDone;
       displayMode = Pause;
     }
+    if (button == Long)
+    {
+      systemMode = CountdownShort;
+      displayMode = Countdown;
+      counterValue = durationShort;
+    }
   }
   break;
   case CountdownLongDone:
   {
-    if (button)
+    if (button == Short)
     {
       systemMode = CountdownShort;
       displayMode = Countdown;
@@ -146,11 +148,17 @@ void updateSystem(bool counterDone, bool button)
       systemMode = CountdownShortDone;
       displayMode = Work;
     }
+    if (button == Long)
+    {
+      systemMode = CountdownLong;
+      displayMode = Countdown;
+      counterValue = durationLong;
+    }
   }
   break;
   case CountdownShortDone:
   {
-    if (button)
+    if (button == Short)
     {
       systemMode = CountdownLong;
       displayMode = Countdown;
@@ -163,19 +171,82 @@ void updateSystem(bool counterDone, bool button)
   }
 }
 
+void printCurrentDurations()
+{
+  Serial.print("New durations in milliseconds WORK/PAUSE ");
+  Serial.print(durationLong);
+  Serial.print("/");
+  Serial.println(durationShort);
+}
+
+void readDurationsFromEeprom()
+{
+  int signature;
+  EEPROM.get(0, signature);
+
+  if (signature != WRITTEN_SIGNATURE)
+  {
+    durationLong = DEFAULT_DURATION_LONG * 1000 * 60;
+    durationShort = DEFAULT_DURATION_SHORT * 1000 * 60;
+    Serial.println("EEPROM empty, filled with defaults");
+  }
+  else
+  {
+    int eeAddress = sizeof(WRITTEN_SIGNATURE);
+    EEPROM.get(eeAddress, durationLong);
+    eeAddress += sizeof(durationLong);
+    EEPROM.get(eeAddress, durationShort);
+    Serial.println("Read from EEPROM");
+  }
+  printCurrentDurations();
+}
+
+void writeDurationsToEeprom()
+{
+  int eeAddress = 0;
+  EEPROM.put(eeAddress, WRITTEN_SIGNATURE);
+  eeAddress += sizeof(WRITTEN_SIGNATURE);
+  EEPROM.put(eeAddress, durationLong);
+  eeAddress += sizeof(durationLong);
+  EEPROM.put(eeAddress, durationShort);
+  EEPROM.commit();
+}
+
+void readSerial()
+{
+  if (Serial.available() > 0)
+  {
+    String newTimes = Serial.readStringUntil('\n');
+    newTimes.trim();
+    int slashIndex = newTimes.indexOf("/");
+    if (slashIndex != 0 && newTimes.length() >= slashIndex + 1)
+    {
+      durationLong = newTimes.substring(0, slashIndex).toInt() * 1000 * 60;
+      durationShort = newTimes.substring(slashIndex + 1).toInt() * 1000 * 60;
+      if (durationLong != 0 || durationShort != 0)
+      {
+        printCurrentDurations();
+        writeDurationsToEeprom();
+        NVIC_SystemReset();
+        return;
+      }
+    }
+
+    Serial.println("To set new duration, send WORK/PAUSE in minutes. E.g. 30/5");
+  }
+}
+
 void setup()
 {
-  pinMode(LED_PIN, OUTPUT);
-  pinMode(RE_SW, INPUT_PULLUP);
+  delay(1000);
   Serial.begin(9600);
+
   Serial.println("Starting Desk Pause Counter");
+
+  readDurationsFromEeprom();
 
   display.setBrightness(2);
   display.showNumberDec(0, false);
-
-  attachInterrupt(digitalPinToInterrupt(RE_CLK), checkPosition, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(RE_DT), checkPosition, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(RE_SW), OnButtonClicked, CHANGE);
 
   counterValue = durationLong;
 }
@@ -183,22 +254,24 @@ void setup()
 void loop()
 {
   const unsigned long now = millis();
-  static int pos = 0;
 
   bool counterDone = !updateCounter(now - lastRun);
   updateSystem(counterDone, buttonClicked);
-  buttonClicked = false;
+  buttonClicked = False;
   updateDisplay(now);
 
-    int newPos = encoder->getPosition();
-  if (pos != newPos)
+  button.update();
+  if (button.isSingleClick())
   {
-    Serial.print("pos:");
-    Serial.print(newPos);
-    Serial.print(" dir:");
-    Serial.println((int)(encoder->getDirection()));
-    pos = newPos;
+    Serial.println("Short");
+    buttonClicked = Short;
+  }
+  else if (button.isLongClick())
+  {
+    Serial.println("Long");
+    buttonClicked = Long;
   }
 
+  readSerial();
   lastRun = now;
 }
