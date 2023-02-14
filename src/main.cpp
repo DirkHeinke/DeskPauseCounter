@@ -10,34 +10,35 @@
 #define DEFAULT_DURATION_LONG 30
 #define DEFAULT_DURATION_SHORT 5
 
-enum DisplayMode
+enum class DisplayMode
 {
   Countdown,
   Pause,
   Work,
-  MenuLong,
-  MenuShort,
+  Off
 };
 
-enum SystemMode
+enum class SystemMode
 {
   CountdownLong,
   CountdownLongDone,
   CountdownShort,
   CountdownShortDone,
+  Off,
 };
 
 enum ButtonClicked
 {
   False,
   Short,
-  Long
+  Long,
+  Double,
 };
 
 TM1637Display display(DISPLAY_CLK, DISPLAY_DIO);
 PinButton button(BUTTON);
-DisplayMode displayMode = Countdown;
-SystemMode systemMode = CountdownLong;
+DisplayMode displayMode = DisplayMode::Countdown;
+SystemMode systemMode = SystemMode::CountdownLong;
 
 int durationLong = 0;
 int durationShort = 0;
@@ -51,7 +52,7 @@ void updateDisplay(unsigned long now)
   bool displayOn = now % 1000 > 500;
   switch (displayMode)
   {
-  case Work:
+  case DisplayMode::Work:
   {
     if (!displayOn)
     {
@@ -67,7 +68,7 @@ void updateDisplay(unsigned long now)
     display.setSegments(WORK);
   }
   break;
-  case Pause:
+  case DisplayMode::Pause:
   {
     if (!displayOn)
     {
@@ -83,13 +84,18 @@ void updateDisplay(unsigned long now)
     display.setSegments(WORK);
   }
   break;
-  case Countdown:
+  case DisplayMode::Countdown:
   {
     int counterInSeconds = counterValue / 1000;
     int minutes = (counterInSeconds / 60);
     int seconds = (counterInSeconds - (minutes * 60)) % 60;
     display.showNumberDecEx(minutes, 0b01000000, false, 2U, 0U);
     display.showNumberDec(seconds, true, 2U, 2U);
+  }
+  break;
+  case DisplayMode::Off:
+  {
+    display.clear();
   }
   break;
 
@@ -116,56 +122,85 @@ void updateSystem(bool counterDone, ButtonClicked button)
 {
   switch (systemMode)
   {
-  case CountdownLong:
+  case SystemMode::CountdownLong:
   {
     if (counterDone)
     {
-      systemMode = CountdownLongDone;
-      displayMode = Pause;
+      systemMode = SystemMode::CountdownLongDone;
+      displayMode = DisplayMode::Pause;
     }
     if (button == Long)
     {
-      systemMode = CountdownShort;
-      displayMode = Countdown;
+      systemMode = SystemMode::CountdownShort;
+      displayMode = DisplayMode::Countdown;
       counterValue = durationShort;
+    }
+    if (button == Double)
+    {
+      systemMode = SystemMode::Off;
+      displayMode = DisplayMode::Off;
     }
   }
   break;
-  case CountdownLongDone:
+  case SystemMode::CountdownLongDone:
   {
     if (button == Short)
     {
-      systemMode = CountdownShort;
-      displayMode = Countdown;
+      systemMode = SystemMode::CountdownShort;
+      displayMode = DisplayMode::Countdown;
       counterValue = durationShort;
+    }
+    if (button == Double)
+    {
+      systemMode = SystemMode::Off;
+      displayMode = DisplayMode::Off;
     }
   }
   break;
-  case CountdownShort:
+  case SystemMode::CountdownShort:
   {
     if (counterDone)
     {
-      systemMode = CountdownShortDone;
-      displayMode = Work;
+      systemMode = SystemMode::CountdownShortDone;
+      displayMode = DisplayMode::Work;
     }
     if (button == Long)
     {
-      systemMode = CountdownLong;
-      displayMode = Countdown;
+      systemMode = SystemMode::CountdownLong;
+      displayMode = DisplayMode::Countdown;
       counterValue = durationLong;
+    }
+    if (button == Double)
+    {
+      systemMode = SystemMode::Off;
+      displayMode = DisplayMode::Off;
     }
   }
   break;
-  case CountdownShortDone:
+  case SystemMode::CountdownShortDone:
   {
     if (button == Short)
     {
-      systemMode = CountdownLong;
-      displayMode = Countdown;
+      systemMode = SystemMode::CountdownLong;
+      displayMode = DisplayMode::Countdown;
       counterValue = durationLong;
+    }
+    if (button == Double)
+    {
+      systemMode = SystemMode::Off;
+      displayMode = DisplayMode::Off;
     }
   }
   break;
+  case SystemMode::Off:
+  {
+    if (button != False)
+    {
+      systemMode = SystemMode::CountdownLong;
+      displayMode = DisplayMode::Countdown;
+      counterValue = durationLong;
+    }
+  }
   default:
     break;
   }
@@ -270,6 +305,11 @@ void loop()
   {
     Serial.println("Long");
     buttonClicked = Long;
+  }
+  else if (button.isDoubleClick())
+  {
+    Serial.println("Double");
+    buttonClicked = Double;
   }
 
   readSerial();
