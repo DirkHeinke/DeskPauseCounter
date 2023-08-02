@@ -6,6 +6,7 @@
 #define DISPLAY_CLK 0
 #define DISPLAY_DIO 1
 #define BUTTON 2
+#define BUZZER 3
 
 #define DEFAULT_DURATION_LONG 30
 #define DEFAULT_DURATION_SHORT 5
@@ -46,6 +47,8 @@ int counterValue = durationLong;
 unsigned long lastRun = 0;
 ButtonClicked buttonClicked = False;
 const int WRITTEN_SIGNATURE = 12345;
+unsigned long nextNote = 0;
+int noteCounter = 0;
 
 void updateDisplay(unsigned long now)
 {
@@ -149,11 +152,43 @@ void updateSystem(bool counterDone, ButtonClicked button)
       systemMode = SystemMode::CountdownShort;
       displayMode = DisplayMode::Countdown;
       counterValue = durationShort;
+      nextNote = 0;
+      noteCounter = 0;
     }
     if (button == Double)
     {
       systemMode = SystemMode::Off;
       displayMode = DisplayMode::Off;
+      nextNote = 0;
+      noteCounter = 0;
+    }
+    // play beep melody and repeat every minute
+    if (nextNote == 0)
+    {
+      nextNote = millis();
+    }
+    else if (millis() > nextNote)
+    {
+      switch (noteCounter)
+      {
+      case 0:
+        tone(BUZZER, 8000, 100);
+        nextNote = millis() + 200;
+        noteCounter++;
+        break;
+      case 1:
+        tone(BUZZER, 5000, 100);
+        nextNote = millis() + 200;
+        noteCounter++;
+        break;
+      case 2:
+        tone(BUZZER, 8000, 100);
+        nextNote = millis() + 60000;
+        noteCounter = 0;
+        break;
+      default:
+        break;
+      }
     }
   }
   break;
@@ -298,16 +333,19 @@ void loop()
   button.update();
   if (button.isSingleClick())
   {
+    tone(BUZZER, 8000, 200);
     Serial.println("Short");
     buttonClicked = Short;
   }
   else if (button.isLongClick())
   {
+    tone(BUZZER, 8000, 200);
     Serial.println("Long");
     buttonClicked = Long;
   }
   else if (button.isDoubleClick())
   {
+    tone(BUZZER, 8000, 200);
     Serial.println("Double");
     buttonClicked = Double;
   }
